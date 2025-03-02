@@ -1,4 +1,15 @@
-indic_nlp
-indic_nlp_resources
-cc.ta.300.bin
-cc.ta.300.bin.gz
+en-ta
+data.csv
+English_full.csv
+pmindia.v1.ta-en 39k.csv
+Tamil_full.csv
+data_pmindia
+data_ij_2021_v1 816k 
+data_ij_2021_v1 816k
+data_ie_tech 18k
+data_general_en_ta_87k
+data_full_corpa
+data_en-ta 118k
+data_corpus
+/*.json
+/*.csv
