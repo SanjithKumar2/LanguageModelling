@@ -8,6 +8,7 @@ from multiprocessing import Pool, Manager
 from joblib import Parallel, delayed
 import json
 import logging
+from utils import merge_tokens, get_stats_chunk
 import argparse
 from typing import Dict, Tuple, List
 from collections import defaultdict
@@ -57,17 +58,17 @@ class BPETokenizer:
             words.append(graphemes + ["</w>"])
         
         return words
-    
-    def _get_stats_chunk(self, words_chunk):
+    @staticmethod
+    def _get_stats_chunk(words_chunk):
         pairs = {}
         for word in words_chunk:
             for i in range(len(word) - 1):
                 pair = (word[i], word[i + 1])
                 pairs[pair] = pairs.get(pair, 0) + 1
         return pairs
-
-    def _merge_tokens(self, words, merge_info):
-        new_tokens, best_pair = merge_info[0], merge_info[1]
+    @staticmethod
+    def _merge_tokens(merge_info):
+        words, new_tokens, best_pair = merge_info[0], merge_info[1], merge_info[2]
         new_words = []
         for word in words:
             new_word = []
@@ -150,7 +151,7 @@ class BPETokenizer:
 
             for i in tqdm(range(num_merges)):
 
-                pairs = self._get_stats_chunk(words)
+                pairs = BPETokenizer._get_stats_chunk(words)
 
                 if not pairs:
                     logger.info("All Pairs were merged, stopping training.")
@@ -163,11 +164,11 @@ class BPETokenizer:
 
                 self.merges[best_pair] = new_token
 
-                merge_info = (new_token, best_pair)
-                words = self._merge_tokens(words, merge_info)
+                merge_info = (words, new_token, best_pair)
+                words = BPETokenizer._merge_tokens(merge_info)
 
-                if (i + 1) % 1000 == 0:
-                    logger.info(f"Completed {i + 1} merges. Current vocab size: {len(self.vocab_to_idx)}")
+                #if (i + 1) % 1000 == 0:
+                #   logger.info(f"Completed {i + 1} merges. Current vocab size: {len(self.vocab_to_idx)}")
 
             logger.info(f"Done merges. Current vocab size: {len(self.vocab_to_idx)}")
             if is_save:
@@ -236,14 +237,15 @@ class BPETokenizer:
                     )
                     words = [word for chunk in words for word in chunk]
 
-                    if (len(self.vocab_to_idx) % 1000) == 0:
-                        logger.info(f"Merges completed: {len(self.merges)}, Vocab size: {len(self.vocab_to_idx)}")
+                 #   if (len(self.vocab_to_idx) % 1000) == 0:
+                 #       logger.info(f"Merges completed: {len(self.merges)}, Vocab size: {len(self.vocab_to_idx)}")
 
             self.idx_to_vocab = {v: k for k, v in self.vocab_to_idx.items()}
             if is_save:
                 self.save(output_file)
             return words
         else:
+            pool = None
             try:
                 cores = num_workers if num_workers else multiprocessing.cpu_count()
                 chunk_size = len(words) // cores
@@ -255,7 +257,7 @@ class BPETokenizer:
 
                 with Pool(processes=cores) as pool:
                     for i in tqdm(range(num_merges)):
-                        pair_counts = pool.map(self._get_stats_chunk, chunks)
+                        pair_counts = pool.map(get_stats_chunk, chunks)
 
                         global_pairs = defaultdict(int)
                         for count in pair_counts:
@@ -273,10 +275,10 @@ class BPETokenizer:
                         with shared_merges._mutex:
                             shared_merges[best_pair] = new_token
                         merge_args = [(chunk, new_token, best_pair) for chunk in chunks]
-                        chunks = pool.map(self._merge_tokens, merge_args)
+                        chunks = pool.map(merge_tokens, merge_args)
 
-                        if (i + 1) % 1000 == 0:
-                            logger.info(f"Completed {i + 1} merges. Current vocab size: {len(shared_vocab_to_idx)}")
+                  #      if (i + 1) % 1000 == 0:
+                  #           logger.info(f"Completed {i + 1} merges. Current vocab size: {len(shared_vocab_to_idx)}")
 
                 self.merges = dict(shared_merges)
                 self.vocab_to_idx = dict(shared_vocab_to_idx)
@@ -285,7 +287,14 @@ class BPETokenizer:
                 if is_save:
                     self.save(output_file)
                 return words
-            
+            except KeyboardInterrupt:
+                if pool is not None:
+                    pool.terminate()
+                raise
+            finally:
+                if pool is not None:
+                    pool.close()
+                    pool.join()
         
     def tokenize(self, text):
         words = self.text_tokenize(text)
@@ -353,7 +362,7 @@ class BPETokenizer:
         return tokenizer
 
 def learn_bpe(datasets=["full_corpa"], vocab_size={"source_lang": 20000, "target_lang": 20000}, 
-              languages={"src": "ta", "trg": "en"}, output_prefixes={"src": "src_bpe1", "trg": "trg_bpe1"}):
+              languages={"src": "ta", "trg": "en"}, output_prefixes={"src": "src_bpe1", "trg": "trg_bpe1"},num_workers=None):
     """
     Train BPE tokenizers for source and target languages on the specified datasets.
     """
@@ -370,12 +379,12 @@ def learn_bpe(datasets=["full_corpa"], vocab_size={"source_lang": 20000, "target
     
     # Train source language tokenizer (e.g., Tamil)
     src_tokenizer = BPETokenizer(languages["src"], full_src_vocab_size)
-    src_tokenizer.train_bpe(full_source_text, output_prefixes["src"], num_workers=1)
+    src_tokenizer.train_bpe(full_source_text, output_prefixes["src"], num_workers=num_workers)
     logger.info(f"Trained BPE tokenizer for {languages['src']} and saved to {output_prefixes['src']}")
     
     # Train target language tokenizer (e.g., English)
     tgt_tokenizer = BPETokenizer(languages["trg"], full_tgt_vocab_size)
-    tgt_tokenizer.train_bpe(full_target_text, output_prefixes["trg"], num_workers=1)
+    tgt_tokenizer.train_bpe(full_target_text, output_prefixes["trg"], num_workers=num_workers)
     logger.info(f"Trained BPE tokenizer for {languages['trg']} and saved to {output_prefixes['trg']}")
 
 def tokenize_text(input_file: str, output_file: str, language: str, tokenizer_path: str):
@@ -441,6 +450,8 @@ if __name__ == '__main__':
     parser.add_argument('--tgt_vocab', type=int, default=20000, help='Vocabulary size for target language')
     parser.add_argument('--output_prefixes', nargs=2, default=['src_bpe1', 'trg_bpe1'],
                         help='Output prefixes for source and target tokenizers (e.g., src_bpe1 trg_bpe1)')
+    parser.add_argument('--num_workers', type=int, default=None,
+                        help='Number of wokers for parallel processing')
     
     # Tokenize/Decode-specific arguments
     parser.add_argument('--input_file', type=str, help='Input file for tokenizing or decoding')
@@ -452,7 +463,7 @@ if __name__ == '__main__':
         vocab_size = {"source_lang": args.src_vocab, "target_lang": args.tgt_vocab}
         languages = {"src": args.src_lang, "trg": args.tgt_lang}
         output_prefixes = {"src": args.output_prefixes[0], "trg": args.output_prefixes[1]}
-        learn_bpe(datasets=args.datasets, vocab_size=vocab_size, languages=languages, output_prefixes=output_prefixes)
+        learn_bpe(datasets=args.datasets, vocab_size=vocab_size, languages=languages, output_prefixes=output_prefixes, num_workers = args.num_workers)
     
     elif args.mode == 'tokenize':
         if not all([args.input_file, args.output_file, args.language, args.tokenizer_path]):
