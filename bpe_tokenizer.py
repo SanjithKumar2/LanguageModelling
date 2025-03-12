@@ -1,7 +1,7 @@
 import dataclasses
 import unicodedata
-import re
 import regex
+import re
 from tqdm import tqdm
 import multiprocessing
 from multiprocessing import Pool, Manager
@@ -29,8 +29,8 @@ class BPETokenizer:
         if self.language not in ["ta", "en"]:
             raise ValueError("Only English and Tamil are supported")
 
-    def normalize_text(self, text):
-        if self.language == "ta":
+    def normalize_text(self, text, language = None):
+        if self.language == "ta" or language == "ta":
             text = unicodedata.normalize('NFC', text)
             text = re.sub(r'"{2,}', '"', text)
             text = re.sub(r"'{2,}", "'", text)
@@ -38,7 +38,7 @@ class BPETokenizer:
             text = re.sub(r'([.;!:?"\'])', r' \1 ', text)
             text = re.sub(r'\s+', ' ', text).strip()
             return text
-        elif self.language == "en":
+        elif self.language == "en" or language == "en":
             text = unicodedata.normalize('NFC', text)
             text = ''.join(c for c in text if (ord(c) >= 32 and ord(c) <= 126) or c in ["<PAD>", "<UNK>", "<BOS>", "<EOS>", " "])
             text = text.lower()
